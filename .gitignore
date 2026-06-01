@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated pipeline artifacts (vocab, sequences, checkpoints, vectors, logs)
+examples/output/
+examples/synthetic_claims.parquet
+*.pt
+
+# Local Claude Code config and personal project instructions (kept out of the
+# public repo; add claude.md manually if you decide you want it tracked)
+.claude/
+claude.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

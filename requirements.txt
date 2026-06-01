@@ -1,0 +1,6 @@
+# Core dependencies for the ICD-10 embedding pipeline.
+# Install with: pip install -r requirements.txt
+torch>=2.0
+pandas>=2.0
+numpy>=1.24
+pyarrow>=12.0
