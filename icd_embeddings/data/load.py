@@ -92,6 +92,10 @@ def load_claims(config: Config) -> pd.DataFrame:
     # Incurred date drives both windowing and recency. We require it to be parseable
     # and non-null -- a claim line with no service date cannot be placed in time.
     claims["incurred_date"] = pd.to_datetime(claims["incurred_date"], errors="coerce")
+
+    # Birth date is optional but must be datetime for age calculation. Unparseable
+    # values become NaT and fall through to UNKNOWN_AGE_ID in build_sequences.
+    claims["member_birth_date"] = pd.to_datetime(claims["member_birth_date"], errors="coerce")
     n_bad_dates = int(claims["incurred_date"].isna().sum())
     if n_bad_dates > 0:
         # ASSUMPTION: rows with an unparseable/missing incurred date are unusable
