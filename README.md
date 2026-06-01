@@ -1,9 +1,11 @@
 # ICD-10 (multi-code-type) Embeddings for Risk Modeling
 
-Learn dense vector representations of medical codes from your own claims, and
-reuse them across risk tasks: **HCC suspecting**, **client premium modeling**,
-and (minor) **fraud**. The embeddings are the deliverable — they are *features*
-you feed into your own downstream models, not a model that predicts cost itself.
+Some out-of-the-box embeddings are missing many codes. This project modernizes
+widely available ICD embeddings by learning dense vector representations of
+medical codes from your own claims, and reusing them across risk tasks:
+**HCC suspecting**, **client premium modeling**, and (minor) **fraud**. The
+embeddings are the deliverable — they are *features* you feed into your own
+downstream models, not a model that predicts cost itself.
 
 One model is trained **per line of business** (Commercial / MA / Medicaid),
 because the populations and HCC frameworks differ.
