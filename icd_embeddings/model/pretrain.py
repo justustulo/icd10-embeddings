@@ -159,11 +159,23 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
     )
 
     model = MaskedCodeTransformer(config=config, vocab_size=vocab_size).to(config.device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-    loss_function = nn.CrossEntropyLoss(ignore_index=IGNORE_LABEL)
 
     best_val_loss = float("inf")
     epochs_without_improvement = 0
+
+    if config.warm_start:
+        if not config.checkpoint_path.exists():
+            raise FileNotFoundError(
+                f"warm_start=True but no checkpoint found at {config.checkpoint_path}"
+            )
+        checkpoint = torch.load(config.checkpoint_path, map_location=config.device)
+        model.load_state_dict(checkpoint["model_state"])
+        # Restore early stopping state so patience is counted from where training left off.
+        best_val_loss = checkpoint.get("best_val_loss", float("inf"))
+        print(f"[pretrain] warm start: loaded checkpoint from {config.checkpoint_path} (best val loss {best_val_loss:.4f})")
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    loss_function = nn.CrossEntropyLoss(ignore_index=IGNORE_LABEL)
 
     for epoch in range(1, config.n_epochs + 1):
         model.train()
@@ -207,7 +219,11 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
                 best_val_loss = val_metrics["loss"]
                 epochs_without_improvement = 0
                 torch.save(
-                    {"model_state": model.state_dict(), "vocab_size": vocab_size},
+                    {
+                        "model_state": model.state_dict(),
+                        "vocab_size": vocab_size,
+                        "best_val_loss": best_val_loss,
+                    },
                     config.checkpoint_path,
                 )
                 print(f"[pretrain]          -> new best val loss {best_val_loss:.4f}, checkpoint saved")
@@ -225,7 +241,7 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
     # When validation is disabled there is no best-checkpoint logic, so save at the end.
     if validation_loader is None:
         torch.save(
-            {"model_state": model.state_dict(), "vocab_size": vocab_size},
+            {"model_state": model.state_dict(), "vocab_size": vocab_size, "best_val_loss": None},
             config.checkpoint_path,
         )
         print(f"[pretrain] saved model to {config.checkpoint_path}")

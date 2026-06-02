@@ -125,6 +125,9 @@ class Config:
         early_stopping_patience: Stop training if validation loss does not improve
             for this many consecutive epochs. Set to n_epochs to disable early
             stopping. Requires validation_fraction > 0.
+        warm_start: If True, load weights from an existing checkpoint at
+            checkpoint_path before training begins. Use this to continue training
+            from a previous run. Raises FileNotFoundError if no checkpoint exists.
         device: "cuda" or "cpu". Set to "cuda" when a GPU is available.
         random_seed: Seed for reproducible vocab sampling, masking and splits.
     """
@@ -167,6 +170,7 @@ class Config:
     n_epochs: int = 10
     validation_fraction: float = 0.1
     early_stopping_patience: int = 5
+    warm_start: bool = False
     device: str = "cpu"
     random_seed: int = 12345
 
