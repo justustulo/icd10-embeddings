@@ -52,16 +52,24 @@ def _age_id_at(birth_date, observation_end) -> int:
     """Compute whole-years age at the observation anchor, with an unknown fallback.
 
     Args:
-        birth_date: The member's birth date (may be NaT/None).
+        birth_date: The member's birth date (may be NaT/None/str/datetime.date).
+            Accepts any type that pd.Timestamp can parse, because parquet readers
+            and groupby aggregations can return date values as strings or
+            datetime.date objects rather than Timestamps depending on the pandas
+            and pyarrow version.
         observation_end: The anchor date (Config.observation_end as a Timestamp).
 
     Returns:
-        Age clamped to [0, MAX_AGE], or UNKNOWN_AGE_ID when birth date is missing
-        or the computed age is implausible (negative or absurdly large).
+        Age clamped to [0, MAX_AGE], or UNKNOWN_AGE_ID when birth date is missing,
+        unparseable, or the computed age is implausible (negative or absurdly large).
     """
     if pd.isna(birth_date):
         return UNKNOWN_AGE_ID
-    age_years = int((observation_end - birth_date).days // 365)
+    try:
+        birth_ts = pd.Timestamp(birth_date)
+    except (ValueError, TypeError):
+        return UNKNOWN_AGE_ID
+    age_years = int((observation_end - birth_ts).days // 365)
     if age_years < 0 or age_years > MAX_AGE:
         # ASSUMPTION: ages outside [0, 100] are data errors, not real members.
         return UNKNOWN_AGE_ID
