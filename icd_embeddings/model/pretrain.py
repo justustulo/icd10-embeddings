@@ -51,21 +51,30 @@ def _move_batch_to_device(batch: dict, device: str) -> dict:
 
 
 @torch.no_grad()
-def _masked_code_accuracy(
-    model: MaskedCodeTransformer, loader: DataLoader, device: str
+def _evaluate_validation(
+    model: MaskedCodeTransformer,
+    loader: DataLoader,
+    loss_function: nn.CrossEntropyLoss,
+    vocab_size: int,
+    device: str,
 ) -> dict:
-    """Compute top-1 and top-5 accuracy over masked positions on a loader.
+    """Compute validation loss and top-1/top-5 accuracy over masked positions.
 
     Args:
-        model: The (eval-mode) transformer.
+        model: The transformer (will be set to eval mode internally).
         loader: DataLoader yielding collated, masked batches.
+        loss_function: The same cross-entropy loss used during training.
+        vocab_size: Number of tokens in the vocabulary; used to flatten logits.
         device: "cuda" or "cpu".
 
     Returns:
-        Dict with "top1" and "top5" accuracy as floats in [0, 1]; zeros if there
-        were no masked positions.
+        Dict with keys "loss" (float), "top1" (float in [0,1]), "top5" (float in
+        [0,1]). Loss is float("inf") and accuracies are 0.0 if there were no
+        masked positions.
     """
     model.eval()
+    total_loss = 0.0
+    n_batches = 0
     total_targets = 0
     top1_hits = 0
     top5_hits = 0
@@ -81,6 +90,12 @@ def _masked_code_accuracy(
             attention_mask=batch["attention_mask"],
         )
         labels = batch["labels"]
+
+        logits_flat = outputs["logits"].view(-1, vocab_size)
+        labels_flat = labels.view(-1)
+        total_loss += float(loss_function(logits_flat, labels_flat).item())
+        n_batches += 1
+
         target_positions = labels != IGNORE_LABEL
         if target_positions.sum() == 0:
             continue
@@ -95,9 +110,10 @@ def _masked_code_accuracy(
         top5_hits += int((top5_predictions == true_tokens.unsqueeze(1)).any(dim=1).sum().item())
         total_targets += int(true_tokens.numel())
 
-    if total_targets == 0:
-        return {"top1": 0.0, "top5": 0.0}
+    if n_batches == 0 or total_targets == 0:
+        return {"loss": float("inf"), "top1": 0.0, "top5": 0.0}
     return {
+        "loss": total_loss / n_batches,
         "top1": top1_hits / total_targets,
         "top5": top5_hits / total_targets,
     }
@@ -146,6 +162,9 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
     loss_function = nn.CrossEntropyLoss(ignore_index=IGNORE_LABEL)
 
+    best_val_loss = float("inf")
+    epochs_without_improvement = 0
+
     for epoch in range(1, config.n_epochs + 1):
         model.train()
         running_loss = 0.0
@@ -172,21 +191,50 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
             running_loss += float(loss.item())
             n_batches += 1
 
-        average_loss = running_loss / max(n_batches, 1)
-        if validation_loader is not None:
-            accuracy = _masked_code_accuracy(model, validation_loader, config.device)
-            print(
-                f"[pretrain] epoch {epoch:>3} | train loss {average_loss:.4f} | "
-                f"val top1 {accuracy['top1']:.3f} | val top5 {accuracy['top5']:.3f}"
-            )
-        else:
-            print(f"[pretrain] epoch {epoch:>3} | train loss {average_loss:.4f}")
+        average_train_loss = running_loss / max(n_batches, 1)
 
-    torch.save(
-        {"model_state": model.state_dict(), "vocab_size": vocab_size},
-        config.checkpoint_path,
-    )
-    print(f"[pretrain] saved model to {config.checkpoint_path}")
+        if validation_loader is not None:
+            val_metrics = _evaluate_validation(
+                model, validation_loader, loss_function, vocab_size, config.device
+            )
+            print(
+                f"[pretrain] epoch {epoch:>3} | train loss {average_train_loss:.4f} | "
+                f"val loss {val_metrics['loss']:.4f} | "
+                f"val top1 {val_metrics['top1']:.3f} | val top5 {val_metrics['top5']:.3f}"
+            )
+
+            if val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
+                epochs_without_improvement = 0
+                torch.save(
+                    {"model_state": model.state_dict(), "vocab_size": vocab_size},
+                    config.checkpoint_path,
+                )
+                print(f"[pretrain]          -> new best val loss {best_val_loss:.4f}, checkpoint saved")
+            else:
+                epochs_without_improvement += 1
+                if epochs_without_improvement >= config.early_stopping_patience:
+                    print(
+                        f"[pretrain] early stopping: val loss did not improve for "
+                        f"{config.early_stopping_patience} consecutive epochs"
+                    )
+                    break
+        else:
+            print(f"[pretrain] epoch {epoch:>3} | train loss {average_train_loss:.4f}")
+
+    # When validation is disabled there is no best-checkpoint logic, so save at the end.
+    if validation_loader is None:
+        torch.save(
+            {"model_state": model.state_dict(), "vocab_size": vocab_size},
+            config.checkpoint_path,
+        )
+        print(f"[pretrain] saved model to {config.checkpoint_path}")
+    else:
+        print(f"[pretrain] best model (val loss {best_val_loss:.4f}) loaded from {config.checkpoint_path}")
+
+    checkpoint = torch.load(config.checkpoint_path, map_location=config.device)
+    model.load_state_dict(checkpoint["model_state"])
+    model.eval()
     return model
 
 
