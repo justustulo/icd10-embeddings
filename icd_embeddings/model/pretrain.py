@@ -223,6 +223,18 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
                         "model_state": model.state_dict(),
                         "vocab_size": vocab_size,
                         "best_val_loss": best_val_loss,
+                        # Architecture metadata lets the visualization app reconstruct
+                        # the model without requiring the original Config object.
+                        "architecture": {
+                            "embedding_dim": config.embedding_dim,
+                            "n_layers": config.n_layers,
+                            "n_heads": config.n_heads,
+                            "feedforward_dim": config.feedforward_dim,
+                            "dropout": config.dropout,
+                            "recency_bucket_day_edges": config.recency_bucket_day_edges,
+                            "max_sequence_length": config.max_sequence_length,
+                            "rollup_rare_dx_to_3char": config.rollup_rare_dx_to_3char,
+                        },
                     },
                     config.checkpoint_path,
                 )
@@ -241,7 +253,21 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
     # When validation is disabled there is no best-checkpoint logic, so save at the end.
     if validation_loader is None:
         torch.save(
-            {"model_state": model.state_dict(), "vocab_size": vocab_size, "best_val_loss": None},
+            {
+                "model_state": model.state_dict(),
+                "vocab_size": vocab_size,
+                "best_val_loss": None,
+                "architecture": {
+                    "embedding_dim": config.embedding_dim,
+                    "n_layers": config.n_layers,
+                    "n_heads": config.n_heads,
+                    "feedforward_dim": config.feedforward_dim,
+                    "dropout": config.dropout,
+                    "recency_bucket_day_edges": config.recency_bucket_day_edges,
+                    "max_sequence_length": config.max_sequence_length,
+                    "rollup_rare_dx_to_3char": config.rollup_rare_dx_to_3char,
+                },
+            },
             config.checkpoint_path,
         )
         print(f"[pretrain] saved model to {config.checkpoint_path}")
