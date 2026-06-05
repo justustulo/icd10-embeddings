@@ -6,10 +6,10 @@ age and sex). The collator does three jobs per batch:
   2. pad every sequence to the batch's longest length,
   3. apply masked-code masking and produce the prediction labels.
 
-Masking follows the standard BERT 80/10/10 recipe: of the positions chosen for
-prediction, 80% are replaced with <MASK>, 10% with a random code token, and 10%
-are left unchanged. This stops the model from only ever seeing <MASK> at the
-positions it must predict.
+Masking uses whole-code masking: ~mask_rate fraction of the unique code types
+in each sequence are selected, then every position carrying one of those codes
+is replaced with <MASK>. This prevents the model from predicting a masked code
+by copying from a sibling occurrence in a different recency bucket.
 """
 
 from __future__ import annotations
@@ -172,7 +172,12 @@ class MaskedCodeCollator:
     def _apply_masking(
         self, token_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Choose prediction targets and apply the 80/10/10 replacement.
+        """Choose prediction targets using whole-code masking and replace with MASK.
+
+        Selects ~mask_rate fraction of the unique code types in each sequence,
+        then replaces every position holding one of those codes with MASK_TOKEN_ID.
+        Masking all occurrences together prevents the model from predicting a code
+        by copying from a sibling occurrence in a different recency bucket.
 
         Args:
             token_ids: (batch, seq) token ids with CLS at position 0 and PAD elsewhere.
@@ -185,37 +190,29 @@ class MaskedCodeCollator:
         masked = token_ids.clone()
         labels = torch.full_like(token_ids, IGNORE_LABEL)
 
-        # Eligible = real code tokens only: exclude padding and the CLS column.
-        eligible = attention_mask.bool().clone()
-        eligible[:, 0] = False  # never predict the CLS slot
+        for b in range(token_ids.shape[0]):
+            # Eligible = real code tokens only: exclude padding and the CLS slot.
+            eligible = attention_mask[b].bool().clone()
+            eligible[0] = False  # never predict the CLS slot
 
-        selection_probs = torch.rand(
-            token_ids.shape, generator=self.generator
-        )
-        selected = eligible & (selection_probs < self.mask_rate)
+            eligible_token_ids = token_ids[b][eligible]
+            unique_codes = eligible_token_ids.unique()
 
-        # Safeguard: guarantee at least one target so the loss is never undefined.
-        if selected.sum() == 0 and eligible.sum() > 0:
-            first_eligible = eligible.flatten().nonzero(as_tuple=False)[0].item()
-            selected.view(-1)[first_eligible] = True
+            if len(unique_codes) == 0:
+                continue
 
-        labels[selected] = token_ids[selected]
+            # Select ~mask_rate fraction of unique codes to mask.
+            code_probs = torch.rand(unique_codes.shape, generator=self.generator)
+            selected_codes = unique_codes[code_probs < self.mask_rate]
 
-        # Of the selected positions: 80% -> MASK, 10% -> random code, 10% unchanged.
-        replacement_roll = torch.rand(token_ids.shape, generator=self.generator)
-        replace_with_mask = selected & (replacement_roll < 0.8)
-        replace_with_random = selected & (replacement_roll >= 0.8) & (replacement_roll < 0.9)
+            # Safeguard: guarantee at least one code is masked so the loss is never undefined.
+            if len(selected_codes) == 0:
+                selected_codes = unique_codes[:1]
 
-        masked[replace_with_mask] = MASK_TOKEN_ID
+            # Mark every position holding a selected code as a prediction target.
+            selected_positions = eligible & torch.isin(token_ids[b], selected_codes)
 
-        n_random = int(replace_with_random.sum().item())
-        if n_random > 0:
-            random_tokens = torch.randint(
-                low=self.n_special_tokens,
-                high=self.vocab_size,
-                size=(n_random,),
-                generator=self.generator,
-            )
-            masked[replace_with_random] = random_tokens
+            labels[b][selected_positions] = token_ids[b][selected_positions]
+            masked[b][selected_positions] = MASK_TOKEN_ID
 
         return masked, labels

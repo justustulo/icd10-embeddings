@@ -153,6 +153,15 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
         _recency_bucket_id(int(d), config.recency_bucket_day_edges) for d in days_ago
     ]
 
+    # Collapse to one row per (member, service date, code) before sequencing.
+    # Insurance claims repeat the same ICD code across multiple claim lines for
+    # the same date of service (e.g., facility + pro fee + ancillary lines).
+    # Keeping raw lines would waste sequence budget and inflate co-occurrence
+    # counts for codes that co-occurred once but billed many times.
+    # recency_id is identical for all lines sharing the same member+date, so no
+    # information is lost by taking the first.
+    claims = claims.drop_duplicates(subset=["member_id", "incurred_date", "code_type", "code"])
+
     # Most-recent-first ordering so truncation keeps the latest codes.
     claims = claims.sort_values(["member_id", "incurred_date"], ascending=[True, False])
 
