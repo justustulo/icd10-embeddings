@@ -12,8 +12,9 @@ Run (from the project root):
 
 from __future__ import annotations
 
+import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 # Make the icd_embeddings package importable when run as a plain script.
@@ -70,8 +71,24 @@ def build_smoke_config() -> Config:
     )
 
 
+def save_run_info(config) -> None:
+    """Write a JSON record of this run's start time and full config to output_dir.
+
+    Args:
+        config: The run configuration to record.
+    """
+    run_info = {
+        "run_started_at": datetime.now().isoformat(timespec="seconds"),
+        "config": config.to_dict(),
+    }
+    with open(config.run_info_path, "w") as f:
+        json.dump(run_info, f, indent=2)
+    print(f"[run_info] Written to {config.run_info_path}")
+
+
 def main() -> None:
     config = build_smoke_config()
+    save_run_info(config)
 
     print("\n=== Phase 0: vocab + sequences ===")
     vocab = build_vocab(config)

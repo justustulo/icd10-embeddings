@@ -24,6 +24,7 @@ from icd_embeddings.config import (
     PAD_TOKEN_ID,
     SPECIAL_TOKENS,
     SPECIAL_TYPE_ID,
+    TYPE_TO_ID,
     Config,
 )
 
@@ -100,6 +101,11 @@ class MaskedCodeCollator:
         self.n_special_tokens = len(SPECIAL_TOKENS)
         self.generator = torch.Generator()
         self.generator.manual_seed(config.random_seed)
+        # Integer type ids that are eligible for masking. Types not in this set
+        # stay visible in context every training step and are never predicted.
+        self.maskable_type_ids = frozenset(
+            TYPE_TO_ID[t] for t in config.mask_code_types
+        )
 
     def inference_batch(self, items: list[dict]) -> dict:
         """Build a padded batch WITHOUT masking (for embedding extraction).
@@ -120,7 +126,7 @@ class MaskedCodeCollator:
         """Build a padded, masked training batch with prediction labels."""
         batch = self._build_padded_batch(items)
         masked_token_ids, labels = self._apply_masking(
-            batch["token_ids"], batch["attention_mask"]
+            batch["token_ids"], batch["type_ids"], batch["attention_mask"]
         )
         batch["token_ids"] = masked_token_ids
         batch["labels"] = labels
@@ -170,17 +176,25 @@ class MaskedCodeCollator:
         }
 
     def _apply_masking(
-        self, token_ids: torch.Tensor, attention_mask: torch.Tensor
+        self,
+        token_ids: torch.Tensor,
+        type_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Choose prediction targets using whole-code masking and replace with MASK.
 
-        Selects ~mask_rate fraction of the unique code types in each sequence,
+        Selects ~mask_rate fraction of the unique codes among maskable positions,
         then replaces every position holding one of those codes with MASK_TOKEN_ID.
         Masking all occurrences together prevents the model from predicting a code
         by copying from a sibling occurrence in a different recency bucket.
 
+        Only code types listed in self.maskable_type_ids are eligible for masking.
+        Types excluded from that set stay visible in context every step, acting as
+        permanent signals (e.g. procedure codes in an ACA suspecting model).
+
         Args:
             token_ids: (batch, seq) token ids with CLS at position 0 and PAD elsewhere.
+            type_ids: (batch, seq) type ids aligned to token_ids.
             attention_mask: (batch, seq) 1 for real tokens, 0 for padding.
 
         Returns:
@@ -190,9 +204,15 @@ class MaskedCodeCollator:
         masked = token_ids.clone()
         labels = torch.full_like(token_ids, IGNORE_LABEL)
 
+        # Build a boolean mask for positions whose code type can be masked.
+        type_eligible = torch.zeros_like(attention_mask, dtype=torch.bool)
+        for type_id in self.maskable_type_ids:
+            type_eligible |= (type_ids == type_id)
+
         for b in range(token_ids.shape[0]):
-            # Eligible = real code tokens only: exclude padding and the CLS slot.
-            eligible = attention_mask[b].bool().clone()
+            # Eligible = real code tokens only: exclude padding, CLS, and any
+            # code types that are not in mask_code_types.
+            eligible = attention_mask[b].bool() & type_eligible[b]
             eligible[0] = False  # never predict the CLS slot
 
             eligible_token_ids = token_ids[b][eligible]

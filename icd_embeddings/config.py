@@ -111,12 +111,23 @@ class Config:
             gives buckets: 0-30d, 31-90d, 91-180d, 181-365d, and >365d.
         max_sequence_length: Maximum number of code tokens per member (after the CLS
             token). Longer histories are truncated to the most recent tokens.
+        unique_codes_per_member: If True, each (code_type, code) pair appears at most
+            once per member, keeping the most-recent occurrence's recency bucket.
+            Matches the binary "ever coded" logic of ACA HHS-HCC risk adjustment;
+            recommended for ACA suspecting models. When False (default), the same
+            code can appear across multiple dates, each as its own token with its own
+            recency bucket.
         embedding_dim: Size of each code/member vector.
         n_layers: Number of transformer encoder layers.
         n_heads: Number of attention heads (must divide embedding_dim).
         feedforward_dim: Width of the transformer feed-forward sublayer.
         dropout: Dropout probability used throughout the encoder.
         mask_rate: Fraction of code tokens masked per sequence during pretraining.
+        mask_code_types: Which code types are eligible to be masked during pretraining.
+            Defaults to all three ("dx", "proc", "rx"). Set to ("dx", "rx") for ACA
+            suspecting models so procedure codes remain permanently visible as context
+            signals and the model focuses its learning on predicting diagnoses and
+            drug codes — the types that drive HCC assignment.
         batch_size: Members per training batch.
         learning_rate: Adam learning rate.
         n_epochs: Number of passes over the training members.
@@ -155,6 +166,7 @@ class Config:
     # --- Sequence construction ---
     recency_bucket_day_edges: tuple[int, ...] = (30, 90, 180, 365, 730)
     max_sequence_length: int = 256
+    unique_codes_per_member: bool = False
 
     # --- Model ---
     embedding_dim: int = 128
@@ -165,6 +177,7 @@ class Config:
 
     # --- Training ---
     mask_rate: float = 0.15
+    mask_code_types: tuple[str, ...] = ("dx", "proc", "rx")
     batch_size: int = 256
     learning_rate: float = 1e-3
     n_epochs: int = 10
@@ -180,6 +193,7 @@ class Config:
     checkpoint_path: Path = field(init=False)
     code_vectors_path: Path = field(init=False)
     member_vectors_path: Path = field(init=False)
+    run_info_path: Path = field(init=False)
 
     def __post_init__(self) -> None:
         """Validate settings and compute the derived output file paths."""
@@ -212,6 +226,14 @@ class Config:
             )
         if not 0.0 < self.mask_rate < 1.0:
             raise ValueError(f"mask_rate must be between 0 and 1, got {self.mask_rate}")
+        if len(self.mask_code_types) == 0:
+            raise ValueError("mask_code_types must contain at least one code type.")
+        invalid_types = set(self.mask_code_types) - set(CODE_TYPES)
+        if invalid_types:
+            raise ValueError(
+                f"mask_code_types contains unknown code types: {invalid_types}. "
+                f"Valid types are: {CODE_TYPES}."
+            )
         if not 0.0 <= self.validation_fraction < 1.0:
             raise ValueError(
                 f"validation_fraction must be in [0, 1), got {self.validation_fraction}"
@@ -223,8 +245,29 @@ class Config:
         self.checkpoint_path = self.output_dir / "model.pt"
         self.code_vectors_path = self.output_dir / "code_vectors.parquet"
         self.member_vectors_path = self.output_dir / "member_vectors.parquet"
+        self.run_info_path = self.output_dir / "run_info.json"
 
     @property
     def n_recency_buckets(self) -> int:
         """Number of recency buckets, including the final '>last edge' bucket."""
         return len(self.recency_bucket_day_edges) + 1
+
+    def to_dict(self) -> dict:
+        """Return all config settings as a JSON-serializable dict.
+
+        Converts Path and date objects to strings. Nested dataclasses (e.g.
+        ColumnMap) are recursively flattened to plain dicts by dataclasses.asdict().
+
+        Returns:
+            Dict of all config fields with only JSON-native value types.
+        """
+        import dataclasses
+        from datetime import date as date_type
+
+        raw = dataclasses.asdict(self)
+        for key, value in raw.items():
+            if isinstance(value, Path):
+                raw[key] = str(value)
+            elif isinstance(value, date_type):
+                raw[key] = value.isoformat()
+        return raw
