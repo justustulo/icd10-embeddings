@@ -133,7 +133,29 @@ def load_claims(config: Config) -> pd.DataFrame:
             f"Map every claim line to one of these three types before loading."
         )
 
+    # Drop rows with missing codes before string conversion. Without this, a null
+    # code value becomes the literal string "nan" after astype(str), which clears
+    # the frequency floor and enters the vocabulary as a real token.
+    n_null_codes = int(claims["code"].isna().sum())
+    if n_null_codes > 0:
+        print(f"[load_claims] dropping {n_null_codes} rows with null/missing code")
+        claims = claims[claims["code"].notna()].copy()
+
     # Codes are compared as strings throughout (e.g. for the 3-char dx rollup).
     claims["code"] = claims["code"].astype(str).str.strip()
+
+    # Drop empty-string codes that survived null filtering (e.g. whitespace-only cells).
+    n_empty_codes = int((claims["code"] == "").sum())
+    if n_empty_codes > 0:
+        print(f"[load_claims] dropping {n_empty_codes} rows with empty code after stripping")
+        claims = claims[claims["code"] != ""].copy()
+
+    # Drop sentinel placeholder values that represent missing codes in the source data.
+    SENTINEL_CODES: frozenset[str] = frozenset({"@NLV"})
+    sentinel_mask = claims["code"].isin(SENTINEL_CODES)
+    n_sentinel = int(sentinel_mask.sum())
+    if n_sentinel > 0:
+        print(f"[load_claims] dropping {n_sentinel} rows with sentinel code value(s) {SENTINEL_CODES}")
+        claims = claims[~sentinel_mask].copy()
 
     return claims.reset_index(drop=True)
