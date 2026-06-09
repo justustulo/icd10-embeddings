@@ -9,6 +9,7 @@ Run order: build_vocab -> build_sequences -> pretrain.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import torch
 from torch import nn
@@ -29,19 +30,33 @@ def _split_members(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split member rows into train and validation sets reproducibly.
 
+    The split is always done at the member_id level: every row belonging to a
+    given member lands in the same partition. This prevents the same member from
+    appearing in both train and validation across different incurred years when
+    group_by_incurred_year=True, which would let the model memorize that member
+    during training and inflate validation accuracy.
+
     Args:
-        sequences: One row per member.
-        validation_fraction: Fraction of members to hold out for validation.
-        random_seed: Seed for the shuffle.
+        sequences: One row per member (or per member-year when
+            group_by_incurred_year=True). Must contain a "member_id" column.
+        validation_fraction: Fraction of *unique members* to hold out for
+            validation. Applied to member count, not row count.
+        random_seed: Seed for the member-level shuffle.
 
     Returns:
         (train_sequences, validation_sequences). Validation may be empty if
         validation_fraction is 0.
     """
-    shuffled = sequences.sample(frac=1.0, random_state=random_seed).reset_index(drop=True)
-    n_validation = int(len(shuffled) * validation_fraction)
-    validation_sequences = shuffled.iloc[:n_validation].reset_index(drop=True)
-    train_sequences = shuffled.iloc[n_validation:].reset_index(drop=True)
+    unique_member_ids = sequences["member_id"].unique()
+    rng = np.random.default_rng(random_seed)
+    rng.shuffle(unique_member_ids)
+
+    n_validation_members = int(len(unique_member_ids) * validation_fraction)
+    validation_member_ids = set(unique_member_ids[:n_validation_members])
+
+    is_validation = sequences["member_id"].isin(validation_member_ids)
+    validation_sequences = sequences[is_validation].reset_index(drop=True)
+    train_sequences = sequences[~is_validation].reset_index(drop=True)
     return train_sequences, validation_sequences
 
 
