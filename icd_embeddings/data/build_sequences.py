@@ -161,10 +161,13 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
         # taking the first 4 characters of the date string.
         claims["incurred_year"] = claims["incurred_date"].dt.year
     else:
-        days_ago = (observation_end - claims["incurred_date"]).dt.days
-        claims["recency_id"] = [
-            _recency_bucket_id(int(d), config.recency_bucket_day_edges) for d in days_ago
-        ]
+        if config.use_recency_bucketing:
+            days_ago = (observation_end - claims["incurred_date"]).dt.days
+            claims["recency_id"] = [
+                _recency_bucket_id(int(d), config.recency_bucket_day_edges) for d in days_ago
+            ]
+        else:
+            claims["recency_id"] = 0
 
     # Sort most-recent-first before deduplicating so drop_duplicates always retains
     # the latest occurrence when it picks the first row it sees per group.
@@ -226,11 +229,14 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
             # Anchor recency and age to year-end so that within-year temporal context
             # matches what the model sees when applied to a given incurred year.
             year_end = pd.Timestamp(f"{incurred_year}-12-31")
-            days_ago = (year_end - member_year_claims["incurred_date"]).dt.days
-            recency_ids = [
-                _recency_bucket_id(int(d), config.recency_bucket_day_edges)
-                for d in days_ago
-            ]
+            if config.use_recency_bucketing:
+                days_ago = (year_end - member_year_claims["incurred_date"]).dt.days
+                recency_ids = [
+                    _recency_bucket_id(int(d), config.recency_bucket_day_edges)
+                    for d in days_ago
+                ]
+            else:
+                recency_ids = [0] * len(member_year_claims)
 
             # member_year_claims is sorted most-recent-first; iloc[0] is the latest claim.
             client_id = member_year_claims.iloc[0]["client_id"]
