@@ -150,6 +150,10 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
         rollup_rare_dx_to_3char=config.rollup_rare_dx_to_3char,
         unk_token_id=UNK_TOKEN_ID,
     )
+    # Drop codes that couldn't be mapped to a real vocabulary token. UNK collapses
+    # every out-of-vocabulary code to one ID regardless of clinical meaning, so
+    # keeping it adds noise without adding signal.
+    claims = claims[claims["token_id"] != UNK_TOKEN_ID].copy()
     claims["type_id"] = claims["code_type"].map(TYPE_TO_ID).astype("int64")
 
     if config.group_by_incurred_year:

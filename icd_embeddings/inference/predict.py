@@ -215,19 +215,23 @@ def build_sequence_tensors(
             .reset_index(drop=True)
         )
 
-    n_codes = len(sequence_df)
-    seq_len = n_codes + 1  # +1 for CLS at position 0
-
-    # Map raw code strings to vocabulary token ids.
+    # Map raw code strings to vocabulary token ids, then drop any that resolved
+    # to UNK. UNK collapses every out-of-vocabulary code to one ID regardless of
+    # clinical meaning, so keeping it adds noise without adding signal.
     token_lookup = build_token_lookup(vocab)
-    raw_token_ids = map_codes_to_tokens(
+    sequence_df["token_id"] = map_codes_to_tokens(
         code_type_series=sequence_df["code_type"],
         code_series=sequence_df["code"],
         token_lookup=token_lookup,
         rollup_rare_dx_to_3char=arch.rollup_rare_dx_to_3char,
         unk_token_id=UNK_TOKEN_ID,
-    ).tolist()
+    )
+    sequence_df = sequence_df[sequence_df["token_id"] != UNK_TOKEN_ID].reset_index(drop=True)
 
+    n_codes = len(sequence_df)
+    seq_len = n_codes + 1  # +1 for CLS at position 0
+
+    raw_token_ids = sequence_df["token_id"].tolist()
     type_id_list = [TYPE_TO_ID[t] for t in sequence_df["code_type"]]
     recency_id_list = [
         _days_to_recency_id(int(d), arch.recency_bucket_day_edges)
