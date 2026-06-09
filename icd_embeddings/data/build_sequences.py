@@ -121,11 +121,15 @@ def _member_attributes(claims: pd.DataFrame, observation_end: pd.Timestamp) -> p
 
 
 def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
-    """Build and persist one sequence row per member for the configured LOB.
+    """Build and persist one sequence row per member (or member-year) for the configured LOB.
 
     Writes a parquet file to `config.sequences_path` with columns:
         member_id, client_id, age_id, sex_id,
         token_ids (list[int]), type_ids (list[int]), recency_ids (list[int]).
+    When config.group_by_incurred_year is True, an additional incurred_year (int)
+    column is written and each calendar year in the observation window produces a
+    separate row per member. Recency and age are then anchored to December 31 of
+    that year rather than config.observation_end.
 
     Args:
         config: The run configuration.
@@ -148,20 +152,32 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
     )
     claims["type_id"] = claims["code_type"].map(TYPE_TO_ID).astype("int64")
 
-    days_ago = (observation_end - claims["incurred_date"]).dt.days
-    claims["recency_id"] = [
-        _recency_bucket_id(int(d), config.recency_bucket_day_edges) for d in days_ago
-    ]
+    if config.group_by_incurred_year:
+        # Integer year extracted from the already-parsed datetime; equivalent to
+        # taking the first 4 characters of the date string.
+        claims["incurred_year"] = claims["incurred_date"].dt.year
+    else:
+        days_ago = (observation_end - claims["incurred_date"]).dt.days
+        claims["recency_id"] = [
+            _recency_bucket_id(int(d), config.recency_bucket_day_edges) for d in days_ago
+        ]
 
     # Sort most-recent-first before deduplicating so drop_duplicates always retains
     # the latest occurrence when it picks the first row it sees per group.
     claims = claims.sort_values(["member_id", "incurred_date"], ascending=[True, False])
 
     if config.unique_codes_per_member:
-        # ACA HHS-HCC risk adjustment is binary: a code either appears or it doesn't.
-        # Collapsing to one token per (code_type, code) per member eliminates frequency
-        # noise and keeps the most-recent recency bucket as the signal.
-        claims = claims.drop_duplicates(subset=["member_id", "code_type", "code"])
+        if config.group_by_incurred_year:
+            # One token per (code_type, code) per member per year -- the same code
+            # appearing in both 2021 and 2022 gets a separate token in each year's sequence.
+            claims = claims.drop_duplicates(
+                subset=["member_id", "incurred_year", "code_type", "code"]
+            )
+        else:
+            # ACA HHS-HCC risk adjustment is binary: a code either appears or it doesn't.
+            # Collapsing to one token per (code_type, code) per member eliminates frequency
+            # noise and keeps the most-recent recency bucket as the signal.
+            claims = claims.drop_duplicates(subset=["member_id", "code_type", "code"])
     else:
         # Default: remove billing duplicates (same code billed on multiple claim lines
         # for the same date of service) but preserve the code across different dates.
@@ -172,23 +188,64 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
             subset=["member_id", "incurred_date", "code_type", "code"]
         )
 
-    member_attributes = _member_attributes(claims, observation_end)
+    if not config.group_by_incurred_year:
+        member_attributes = _member_attributes(claims, observation_end)
 
-    sequence_rows = []
-    for member_id, member_claims in claims.groupby("member_id", sort=False):
-        truncated = member_claims.head(config.max_sequence_length)
-        attributes = member_attributes.loc[member_id]
-        sequence_rows.append(
-            {
-                "member_id": member_id,
-                "client_id": attributes["client_id"],
-                "age_id": int(attributes["age_id"]),
-                "sex_id": int(attributes["sex_id"]),
-                "token_ids": truncated["token_id"].tolist(),
-                "type_ids": truncated["type_id"].tolist(),
-                "recency_ids": truncated["recency_id"].tolist(),
-            }
+        sequence_rows = []
+        for member_id, member_claims in claims.groupby("member_id", sort=False):
+            truncated = member_claims.head(config.max_sequence_length)
+            attributes = member_attributes.loc[member_id]
+            sequence_rows.append(
+                {
+                    "member_id": member_id,
+                    "client_id": attributes["client_id"],
+                    "age_id": int(attributes["age_id"]),
+                    "sex_id": int(attributes["sex_id"]),
+                    "token_ids": truncated["token_id"].tolist(),
+                    "type_ids": truncated["type_id"].tolist(),
+                    "recency_ids": truncated["recency_id"].tolist(),
+                }
+            )
+    else:
+        # Precompute birth date and sex once; both are stable across years for a member.
+        birth_by_member = (
+            claims.dropna(subset=["member_birth_date"])
+            .groupby("member_id")["member_birth_date"]
+            .first()
         )
+        sex_by_member = claims.groupby("member_id")["member_sex"].first()
+
+        sequence_rows = []
+        for (member_id, incurred_year), member_year_claims in claims.groupby(
+            ["member_id", "incurred_year"], sort=False
+        ):
+            # Anchor recency and age to year-end so that within-year temporal context
+            # matches what the model sees when applied to a given incurred year.
+            year_end = pd.Timestamp(f"{incurred_year}-12-31")
+            days_ago = (year_end - member_year_claims["incurred_date"]).dt.days
+            recency_ids = [
+                _recency_bucket_id(int(d), config.recency_bucket_day_edges)
+                for d in days_ago
+            ]
+
+            # member_year_claims is sorted most-recent-first; iloc[0] is the latest claim.
+            client_id = member_year_claims.iloc[0]["client_id"]
+            age_id = _age_id_at(birth_by_member.get(member_id, pd.NaT), year_end)
+            sex_id = _sex_id(sex_by_member.get(member_id))
+
+            truncated = member_year_claims.head(config.max_sequence_length)
+            sequence_rows.append(
+                {
+                    "member_id": member_id,
+                    "incurred_year": int(incurred_year),
+                    "client_id": client_id,
+                    "age_id": int(age_id),
+                    "sex_id": int(sex_id),
+                    "token_ids": truncated["token_id"].tolist(),
+                    "type_ids": truncated["type_id"].tolist(),
+                    "recency_ids": recency_ids[:config.max_sequence_length],
+                }
+            )
 
     sequences = pd.DataFrame(sequence_rows)
     sequences.to_parquet(config.sequences_path, index=False)

@@ -117,6 +117,11 @@ class Config:
             recommended for ACA suspecting models. When False (default), the same
             code can appear across multiple dates, each as its own token with its own
             recency bucket.
+        group_by_incurred_year: If True, each (member_id, calendar_year) pair becomes
+            a separate training row instead of pooling all years into one sequence.
+            Recency and age are anchored to December 31 of each year. Use this when
+            the observation window spans multiple complete incurred years so that
+            within-year code context matches what the model sees at inference time.
         embedding_dim: Size of each code/member vector.
         n_layers: Number of transformer encoder layers.
         n_heads: Number of attention heads (must divide embedding_dim).
@@ -167,6 +172,7 @@ class Config:
     recency_bucket_day_edges: tuple[int, ...] = (30, 90, 180, 365, 730)
     max_sequence_length: int = 256
     unique_codes_per_member: bool = False
+    group_by_incurred_year: bool = False
 
     # --- Model ---
     embedding_dim: int = 128

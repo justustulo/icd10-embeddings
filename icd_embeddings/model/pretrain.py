@@ -223,6 +223,8 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
                         "model_state": model.state_dict(),
                         "vocab_size": vocab_size,
                         "best_val_loss": best_val_loss,
+                        "best_val_top1": val_metrics["top1"],
+                        "best_val_top5": val_metrics["top5"],
                         # Architecture metadata lets the visualization app reconstruct
                         # the model without requiring the original Config object.
                         "architecture": {
@@ -257,6 +259,8 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
                 "model_state": model.state_dict(),
                 "vocab_size": vocab_size,
                 "best_val_loss": None,
+                "best_val_top1": None,
+                "best_val_top5": None,
                 "architecture": {
                     "embedding_dim": config.embedding_dim,
                     "n_layers": config.n_layers,
