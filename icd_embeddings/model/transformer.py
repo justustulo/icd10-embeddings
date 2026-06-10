@@ -55,7 +55,9 @@ class MaskedCodeTransformer(nn.Module):
         )
         self.type_embedding = nn.Embedding(N_TYPE_IDS, config.embedding_dim)
         self.recency_embedding = nn.Embedding(n_recency_ids, config.embedding_dim)
-        self.position_embedding = nn.Embedding(max_positions, config.embedding_dim)
+        self.use_position_embedding = config.use_position_embedding
+        if config.use_position_embedding:
+            self.position_embedding = nn.Embedding(max_positions, config.embedding_dim)
         self.age_embedding = nn.Embedding(N_AGE_IDS, config.embedding_dim)
         self.sex_embedding = nn.Embedding(N_SEX_IDS, config.embedding_dim)
 
@@ -92,9 +94,6 @@ class MaskedCodeTransformer(nn.Module):
         """Sum the five embedding sources into one (batch, seq, dim) tensor."""
         batch_size, seq_len = token_ids.shape
 
-        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0)
-        position_vectors = self.position_embedding(positions)  # (1, seq, dim)
-
         # Age and sex are member-level; broadcast them across all positions.
         age_vectors = self.age_embedding(age_ids).unsqueeze(1)  # (batch, 1, dim)
         sex_vectors = self.sex_embedding(sex_ids).unsqueeze(1)  # (batch, 1, dim)
@@ -103,10 +102,12 @@ class MaskedCodeTransformer(nn.Module):
             self.code_embedding(token_ids)
             + self.type_embedding(type_ids)
             + self.recency_embedding(recency_ids)
-            + position_vectors
             + age_vectors
             + sex_vectors
         )
+        if self.use_position_embedding:
+            positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0)
+            summed = summed + self.position_embedding(positions)  # (1, seq, dim)
         normalized = self.embedding_layer_norm(summed)
         return self.embedding_dropout(normalized)
 

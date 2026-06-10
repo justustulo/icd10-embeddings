@@ -112,6 +112,11 @@ class Config:
             the model has no explicit recency signal; the learned position embedding
             still captures sequence order. Disable when you don't want temporal
             distance to be an explicit input feature.
+        use_position_embedding: If True (default), each token is tagged with a learned
+            position embedding based on its index in the sequence. If False, no
+            positional signal is added and the model treats the sequence as an unordered
+            set. Disable for tasks like ACA suspecting where diagnosis history has no
+            meaningful order and you want the model to be permutation-invariant.
         recency_bucket_day_edges: Ascending day thresholds, measured backwards from
             observation_end, that define recency buckets. Example [30, 90, 180, 365]
             gives buckets: 0-30d, 31-90d, 91-180d, 181-365d, and >365d.
@@ -181,6 +186,7 @@ class Config:
     max_sequence_length: int = 256
     unique_codes_per_member: bool = False
     group_by_incurred_year: bool = False
+    use_position_embedding: bool = True
 
     # --- Model ---
     embedding_dim: int = 128
