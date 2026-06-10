@@ -55,13 +55,16 @@ class ArchConfig:
     n_heads: int = 8
     feedforward_dim: int = 512
     dropout: float = 0.1
+    use_recency_bucketing: bool = True
     recency_bucket_day_edges: tuple[int, ...] = (30, 90, 180, 365, 730)
     max_sequence_length: int = 256
     rollup_rare_dx_to_3char: bool = True
 
     @property
     def n_recency_buckets(self) -> int:
-        """Number of recency buckets, including the final open-ended bucket."""
+        """Number of recency buckets. 1 when recency is disabled (all tokens share bucket 0)."""
+        if not self.use_recency_bucketing:
+            return 1
         return len(self.recency_bucket_day_edges) + 1
 
 
@@ -233,10 +236,14 @@ def build_sequence_tensors(
 
     raw_token_ids = sequence_df["token_id"].tolist()
     type_id_list = [TYPE_TO_ID[t] for t in sequence_df["code_type"]]
-    recency_id_list = [
-        _days_to_recency_id(int(d), arch.recency_bucket_day_edges)
-        for d in sequence_df["days_ago"]
-    ]
+    if arch.use_recency_bucketing:
+        recency_id_list = [
+            _days_to_recency_id(int(d), arch.recency_bucket_day_edges)
+            for d in sequence_df["days_ago"]
+        ]
+    else:
+        # All tokens share the single neutral bucket (id 0) when recency is disabled.
+        recency_id_list = [0] * len(sequence_df)
 
     # CLS and PAD use a dedicated recency slot just past the real buckets.
     special_recency_id = arch.n_recency_buckets

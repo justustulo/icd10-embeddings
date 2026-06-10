@@ -248,6 +248,7 @@ def pretrain(config: Config) -> MaskedCodeTransformer:
                             "n_heads": config.n_heads,
                             "feedforward_dim": config.feedforward_dim,
                             "dropout": config.dropout,
+                            "use_recency_bucketing": config.use_recency_bucketing,
                             "recency_bucket_day_edges": config.recency_bucket_day_edges,
                             "max_sequence_length": config.max_sequence_length,
                             "rollup_rare_dx_to_3char": config.rollup_rare_dx_to_3char,

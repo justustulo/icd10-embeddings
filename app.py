@@ -34,6 +34,7 @@ _ARCH_DEFAULTS: dict = {
     "arch_feedforward_dim": 512,
     "arch_dropout": 0.1,
     "arch_max_sequence_length": 256,
+    "arch_use_recency_bucketing": True,
     "arch_recency_edges_str": "30,90,180,365,730",
     "arch_rollup_rare_dx": True,
 }
@@ -169,6 +170,9 @@ def _handle_load_model(checkpoint_path: str, vocab_path: str) -> None:
             st.session_state["arch_feedforward_dim"] = arch_meta["feedforward_dim"]
             st.session_state["arch_dropout"] = float(arch_meta["dropout"])
             st.session_state["arch_max_sequence_length"] = arch_meta["max_sequence_length"]
+            st.session_state["arch_use_recency_bucketing"] = arch_meta.get(
+                "use_recency_bucketing", True
+            )
             st.session_state["arch_recency_edges_str"] = ",".join(
                 str(e) for e in arch_meta["recency_bucket_day_edges"]
             )
@@ -178,6 +182,7 @@ def _handle_load_model(checkpoint_path: str, vocab_path: str) -> None:
 
         # Build ArchConfig from session_state (just updated above if checkpoint had metadata).
         try:
+            use_recency = st.session_state["arch_use_recency_bucketing"]
             recency_edges = _parse_recency_edges(
                 st.session_state["arch_recency_edges_str"]
             )
@@ -188,6 +193,7 @@ def _handle_load_model(checkpoint_path: str, vocab_path: str) -> None:
                 feedforward_dim=st.session_state["arch_feedforward_dim"],
                 dropout=st.session_state["arch_dropout"],
                 max_sequence_length=st.session_state["arch_max_sequence_length"],
+                use_recency_bucketing=use_recency,
                 recency_bucket_day_edges=recency_edges,
                 rollup_rare_dx_to_3char=st.session_state["arch_rollup_rare_dx"],
             )
@@ -299,10 +305,16 @@ def _render_sidebar() -> None:
                 step=1,
                 key="arch_max_sequence_length",
             )
+            st.checkbox(
+                "Use recency bucketing",
+                key="arch_use_recency_bucketing",
+                help="Uncheck if the model was trained with use_recency_bucketing=False",
+            )
             st.text_input(
                 "Recency bucket day edges (comma-separated)",
                 key="arch_recency_edges_str",
                 help="e.g. '30,90,180,365,730' creates 6 recency buckets",
+                disabled=not st.session_state.get("arch_use_recency_bucketing", True),
             )
             st.checkbox(
                 "Roll up rare dx to 3-char parent",
