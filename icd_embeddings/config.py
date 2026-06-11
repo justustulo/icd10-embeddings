@@ -121,6 +121,10 @@ class Config:
             observation_end, that define recency buckets. Example [30, 90, 180, 365]
             gives buckets: 0-30d, 31-90d, 91-180d, 181-365d, and >365d.
             Ignored when use_recency_bucketing is False.
+        min_sequence_length: Minimum number of code tokens a member must have (after
+            UNK removal and deduplication) to be included in training. Members below
+            this threshold are dropped from the sequences file. Has no effect at
+            inference time. Default 1 keeps all members.
         max_sequence_length: Maximum number of code tokens per member (after the CLS
             token). Longer histories are truncated to the most recent tokens.
         unique_codes_per_member: If True, each (code_type, code) pair appears at most
@@ -183,6 +187,7 @@ class Config:
     # --- Sequence construction ---
     use_recency_bucketing: bool = True
     recency_bucket_day_edges: tuple[int, ...] = (30, 90, 180, 365, 730)
+    min_sequence_length: int = 1
     max_sequence_length: int = 256
     unique_codes_per_member: bool = False
     group_by_incurred_year: bool = False
@@ -238,6 +243,16 @@ class Config:
                     "prediction_end must be set and on or after prediction_start when "
                     "prediction_start is provided"
                 )
+
+        if self.min_sequence_length < 1:
+            raise ValueError(
+                f"min_sequence_length must be at least 1, got {self.min_sequence_length}"
+            )
+        if self.min_sequence_length > self.max_sequence_length:
+            raise ValueError(
+                f"min_sequence_length ({self.min_sequence_length}) cannot exceed "
+                f"max_sequence_length ({self.max_sequence_length})"
+            )
 
         if self.embedding_dim % self.n_heads != 0:
             raise ValueError(

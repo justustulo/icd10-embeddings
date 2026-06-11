@@ -258,6 +258,18 @@ def build_sequences(config: Config, vocab: pd.DataFrame) -> pd.DataFrame:
             )
 
     sequences = pd.DataFrame(sequence_rows)
+
+    if config.min_sequence_length > 1:
+        n_before = len(sequences)
+        sequences = sequences[
+            sequences["token_ids"].map(len) >= config.min_sequence_length
+        ].reset_index(drop=True)
+        n_dropped = n_before - len(sequences)
+        print(
+            f"[build_sequences] dropped {n_dropped} members with fewer than "
+            f"{config.min_sequence_length} tokens ({n_before} -> {len(sequences)})"
+        )
+
     sequences.to_parquet(config.sequences_path, index=False)
     print(
         f"[build_sequences] {len(sequences)} member sequences "
