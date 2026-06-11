@@ -1,12 +1,15 @@
-"""The shared, type-aware masked-code transformer.
+"""The shared masked-code transformer.
 
 One model serves all three code types. Every token's input vector is the sum of
-five learned embeddings:
+four learned embeddings:
     code     - what the code is (the reusable code embedding table)
-    type     - dx / proc / rx / special, so the model knows the code's kind
     recency  - which time bucket the code fell in (coarse "when")
     position - order within the sequence (fine ordering inside a bucket)
     age/sex  - member-level demographics, broadcast across all positions
+
+Token type ids (dx / proc / rx / special) are passed through the model for
+masking decisions but are NOT added as a learned embedding — the code embedding
+table alone captures per-type signal.
 
 A standard transformer encoder then contextualizes the tokens. Two outputs are
 reused downstream: the per-position logits over the vocabulary (for the masked-
@@ -21,7 +24,6 @@ from torch import nn
 from icd_embeddings.config import (
     N_AGE_IDS,
     N_SEX_IDS,
-    N_TYPE_IDS,
     Config,
 )
 
@@ -53,7 +55,6 @@ class MaskedCodeTransformer(nn.Module):
         self.code_embedding = nn.Embedding(
             vocab_size, config.embedding_dim, padding_idx=0
         )
-        self.type_embedding = nn.Embedding(N_TYPE_IDS, config.embedding_dim)
         self.recency_embedding = nn.Embedding(n_recency_ids, config.embedding_dim)
         self.use_position_embedding = config.use_position_embedding
         if config.use_position_embedding:
@@ -86,13 +87,12 @@ class MaskedCodeTransformer(nn.Module):
     def _embed_inputs(
         self,
         token_ids: torch.Tensor,
-        type_ids: torch.Tensor,
         recency_ids: torch.Tensor,
         age_ids: torch.Tensor,
         sex_ids: torch.Tensor,
     ) -> torch.Tensor:
-        """Sum the five embedding sources into one (batch, seq, dim) tensor."""
-        batch_size, seq_len = token_ids.shape
+        """Sum the four embedding sources into one (batch, seq, dim) tensor."""
+        _, seq_len = token_ids.shape
 
         # Age and sex are member-level; broadcast them across all positions.
         age_vectors = self.age_embedding(age_ids).unsqueeze(1)  # (batch, 1, dim)
@@ -100,7 +100,6 @@ class MaskedCodeTransformer(nn.Module):
 
         summed = (
             self.code_embedding(token_ids)
-            + self.type_embedding(type_ids)
             + self.recency_embedding(recency_ids)
             + age_vectors
             + sex_vectors
@@ -133,7 +132,7 @@ class MaskedCodeTransformer(nn.Module):
         Returns:
             (batch, seq, dim) hidden states.
         """
-        inputs = self._embed_inputs(token_ids, type_ids, recency_ids, age_ids, sex_ids)
+        inputs = self._embed_inputs(token_ids, recency_ids, age_ids, sex_ids)
         # PyTorch's encoder expects True where a key should be IGNORED (i.e. padding).
         padding_mask = attention_mask == 0
         return self.encoder(inputs, src_key_padding_mask=padding_mask)
